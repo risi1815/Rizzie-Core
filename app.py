@@ -135,4 +135,31 @@ def rizzie_handler():
 @app.route("/speak", methods=["POST"])
 def sarvam_speak():
     data = request.get_json(silent=True) or {}
-    text_to_speak = data.get("
+    text_to_speak = data.get("text", "")
+
+    if not SARVAM_API_KEY:
+        return jsonify({"error": "Sarvam API Key not configured."}), 500
+
+    url = "https://api.sarvam.ai/text-to-speech"
+    payload = {
+        "inputs": [text_to_speak],
+        "target_language_code": "ta-IN",
+        "speaker": "meera",
+        "speech_sample_rate": 8000,
+        "enable_preprocessing": True,
+        "model": "bulbul:v1"
+    }
+    headers = {
+        "api-subscription-key": SARVAM_API_KEY,
+        "Content-Type": "application/json"
+    }
+
+    try:
+        response = requests.post(url, json=payload, headers=headers)
+        return jsonify(response.json()), response.status_code
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+if __name__ == "__main__":
+    port = int(os.environ.get("PORT", 10000))
+    app.run(host="0.0.0.0", port=port)
