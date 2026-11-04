@@ -2,43 +2,42 @@ import os
 import json
 import requests
 from flask import Flask, request, jsonify
+from flask_cors import CORS
 from groq import Groq
 from google import genai
 from google.genai import types
 from supabase import create_client
-from flask import Flask, request, jsonify
-from flask_cors import CORS  # 1. Import CORS here
 
 app = Flask(__name__)
-CORS(app)  # 2. Enable CORS on your app right here
+CORS(app)
 
-# Load Environment Variables from Render
-GROQ_API_KEY = os.environ.get("GROQ_API_KEY")
-GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
-SARVAM_API_KEY = os.environ.get("SARVAM_API_KEY")
-SUPABASE_URL = os.environ.get("SUPABASE_URL")
-SUPABASE_KEY = os.environ.get("SUPABASE_KEY")
-FAMILY_SECRET_PASSWORD = os.environ.get("FAMILY_SECRET_PASSWORD", "rizzie2026family")
+# Load Environment Variables from Render (strip accidental spaces)
+GROQ_API_KEY = (os.environ.get("GROQ_API_KEY") or "").strip()
+GEMINI_API_KEY = (os.environ.get("GEMINI_API_KEY") or "").strip()
+SARVAM_API_KEY = (os.environ.get("SARVAM_API_KEY") or "").strip()
+SUPABASE_URL = (os.environ.get("SUPABASE_URL") or "").strip()
+SUPABASE_KEY = (os.environ.get("SUPABASE_KEY") or "").strip()
+FAMILY_SECRET_PASSWORD = os.environ.get("FAMILY_SECRET_PASSWORD", "rizzie2026family").strip()
 
 # Initialize AI & Database Clients safely
 try:
     groq_client = Groq(api_key=GROQ_API_KEY) if GROQ_API_KEY else None
 except Exception as e:
-    print(f"Groq init error: {e}")
+    print(f"Groq init error: {e}", flush=True)
     groq_client = None
 
 try:
     gemini_client = genai.Client(api_key=GEMINI_API_KEY) if GEMINI_API_KEY else None
 except Exception as e:
-    print(f"Gemini init error: {e}")
+    print(f"Gemini init error: {e}", flush=True)
     gemini_client = None
-    
+
 supabase = None
 try:
     if SUPABASE_URL and SUPABASE_KEY and len(SUPABASE_KEY) > 10:
         supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
 except Exception as e:
-    print(f"Database vault warning (continuing without vault): {e}")
+    print(f"Database vault warning (continuing without vault): {e}", flush=True)
 
 @app.route("/", methods=["GET"])
 def home():
@@ -49,14 +48,14 @@ def home():
 
 @app.route("/rizzie", methods=["POST"])
 def rizzie_handler():
-    data = request.json or {}
-    
+    data = request.get_json(silent=True) or {}
+
     # Security Check: Ensure family password matches via JSON body or Header
     auth_password = data.get("password") or request.headers.get("X-Family-Password")
     if auth_password != FAMILY_SECRET_PASSWORD:
         return jsonify({"error": "Unauthorized family member access."}), 403
 
-    user_speaker = data.get("speaker", "Family Member") # e.g., Amma, Akka, Rishikesh
+    user_speaker = data.get("speaker", "Family Member")
     user_query = data.get("query", "")
 
     if not user_query:
@@ -76,21 +75,24 @@ def rizzie_handler():
     You are Rizzie, a warm, loyal personal family companion and assistant for Rishikesh's family in Bengaluru.
     You understand colloquial Tamil, Tanglish ('Pavithra ku call pannu'), and English fluently.
     You know the family tree and context: {family_context}
-    
+
     The person speaking to you right now is: {user_speaker}.
-    
+
     Analyze their request. If it is a direct command requiring an action (like calling someone, opening YouTube, navigating Maps, sending WhatsApp, or Emergency SOS), output a strict JSON response.
     If it is a general question, story, or conversational topic, handle it gracefully.
-    
+
     Return a strict JSON object containing:
-    1. 'action': One of ['NONE', 'MAKE_CALL', 'PLAY_YOUTUBE', 'NAVIGATE_MAPS', 'SEND_WHATSAPP', 'EMERGENCY_SOS']
-    2. 'target': Name, phone number, or search term if an action is required (otherwise empty string).
-    3. 'spoken_reply': A natural, warm reply spoken back in colloquial Tamil/Tanglish or English addressing {user_speaker}.
+    1. "action": One of ["NONE", "MAKE_CALL", "PLAY_YOUTUBE", "NAVIGATE_MAPS", "SEND_WHATSAPP", "EMERGENCY_SOS"]
+    2. "target": Name, phone number, or search term if an action is required (otherwise empty string).
+    3. "spoken_reply": A natural, warm reply spoken back in colloquial Tamil/Tanglish or English addressing {user_speaker}.
     """
 
-    try:
-        # Try Groq Llama 3.3 first for ultra-fast action routing and response
-        if groq_client:
+    groq_err = "Not configured"
+    gemini_err = "Not configured"
+
+    # Try Groq Llama 3.3 first
+    if groq_client:
+        try:
             completion = groq_client.chat.completions.create(
                 model="llama-3.3-70b-versatile",
                 messages=[
@@ -100,59 +102,37 @@ def rizzie_handler():
                 response_format={"type": "json_object"}
             )
             ai_output = json.loads(completion.choices[0].message.content)
-            return jsonify(ai_output)
-            
-    except Exception as groq_error:
-        # Fallback to Gemini 2.5 Flash if Groq fails or hits a rate limit
-        try:
-            if gemini_client:
-                response = gemini_client.models.generate_content(
-                    model='gemini-2.5-flash',
-                    contents=user_query,
-                    config=types.GenerateContentConfig(
-                        system_instruction=system_prompt,
-                        response_mime_type="application/json"
-                    )
-                )
-                ai_output = json.loads(response.text)
-                return jsonify(ai_output)
-        except Exception as gemini_error:
-            return jsonify({
-                "action": "NONE", 
-                "spoken_reply": f"Sorry, both of my AI brains encountered an error."
-            }), 500
+            return jsonify(ai_output), 200
+        except Exception as e:
+            groq_err = str(e)
+            print(f"Groq API error: {groq_err}", flush=True)
 
-    return jsonify({"action": "NONE", "spoken_reply": "No AI clients configured."}), 500
+    # Fallback to Gemini 2.5 Flash if Groq fails
+    if gemini_client:
+        try:
+            response = gemini_client.models.generate_content(
+                model="gemini-2.5-flash",
+                contents=user_query,
+                config=types.GenerateContentConfig(
+                    system_instruction=system_prompt,
+                    response_mime_type="application/json"
+                )
+            )
+            ai_output = json.loads(response.text)
+            return jsonify(ai_output), 200
+        except Exception as e:
+            gemini_err = str(e)
+            print(f"Gemini API error: {gemini_err}", flush=True)
+
+    return jsonify({
+        "action": "NONE",
+        "spoken_reply": "Sorry, both of my AI brains encountered an error.",
+        "debug_groq_error": groq_err,
+        "debug_gemini_error": gemini_err
+    }), 500
 
 # Dedicated Sarvam AI Text-to-Speech Endpoint for Rizzie's Tamil Voice
 @app.route("/speak", methods=["POST"])
 def sarvam_speak():
-    data = request.json or {}
-    text_to_speak = data.get("text", "")
-    
-    if not SARVAM_API_KEY:
-        return jsonify({"error": "Sarvam API Key not configured."}), 500
-        
-    url = "https://api.sarvam.ai/text-to-speech"
-    payload = {
-        "inputs": [text_to_speak],
-        "target_language_code": "ta-IN",  # Tamil
-        "speaker": "meera",  # Natural Indian voice profile on Sarvam
-        "speech_sample_rate": 8000,
-        "enable_preprocessing": True,
-        "model": "bulbul:v1"
-    }
-    headers = {
-        "api-subscription-key": SARVAM_API_KEY,
-        "Content-Type": "application/json"
-    }
-    
-    try:
-        response = requests.post(url, json=payload, headers=headers)
-        return jsonify(response.json())
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
-
-if __name__ == "__main__":
-    port = int(os.environ.get("PORT", 10000))
-    app.run(host="0.0.0.0", port=port)
+    data = request.get_json(silent=True) or {}
+    text_to_speak = data.get("
