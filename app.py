@@ -102,7 +102,6 @@ def rizzie_handler():
                 temperature=1,
                 max_completion_tokens=2048,
                 top_p=1,
-                reasoning_effort="medium",
                 stream=False,
                 response_format={"type": "json_object"}
             )
