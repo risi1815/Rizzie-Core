@@ -90,23 +90,20 @@ def rizzie_handler():
     groq_err = "Not configured"
     gemini_err = "Not configured"
 
-    # 1. Try Groq first (dynamically selects an active model on your account)
+    # 1. Try Groq with openai/gpt-oss-120b from your Playground
     if groq_client:
         try:
-            available_models = [
-                m.id for m in groq_client.models.list().data
-                if not any(skip in m.id.lower() for skip in ["whisper", "guard", "tts", "vision", "embed"])
-            ]
-            # Prefer a 70b or llama model if available, otherwise pick the first active chat model
-            preferred = [m for m in available_models if "llama" in m.lower() or "70b" in m.lower()]
-            active_groq_model = preferred[0] if preferred else available_models[0]
-
             completion = groq_client.chat.completions.create(
-                model=active_groq_model,
+                model="openai/gpt-oss-120b",
                 messages=[
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": user_query}
                 ],
+                temperature=1,
+                max_completion_tokens=2048,
+                top_p=1,
+                reasoning_effort="medium",
+                stream=False,
                 response_format={"type": "json_object"}
             )
             ai_output = json.loads(completion.choices[0].message.content)
@@ -115,11 +112,19 @@ def rizzie_handler():
             groq_err = str(e)
             print(f"Groq API error: {groq_err}", flush=True)
 
-    # 2. Fallback to Gemini 3.0 Flash
+    # 2. Fallback to Gemini (tries 3.5-flash first, then auto-detects valid flash model)
     if gemini_client:
         try:
+            valid_gemini_models = [
+                m.name.replace("models/", "") for m in gemini_client.models.list()
+                if "flash" in m.name.lower() and not any(x in m.name.lower() for x in ["tts", "image", "audio", "embedding", "2.5"])
+            ]
+            target_gemini = "gemini-3.5-flash"
+            if valid_gemini_models and target_gemini not in valid_gemini_models:
+                target_gemini = valid_gemini_models[0]
+
             response = gemini_client.models.generate_content(
-                model="gemini-3.0-flash",
+                model=target_gemini,
                 contents=user_query,
                 config=types.GenerateContentConfig(
                     system_instruction=system_prompt,
