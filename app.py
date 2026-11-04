@@ -1,6 +1,7 @@
 import os
 import json
 import requests
+from datetime import datetime
 from flask import Flask, request, jsonify
 from flask_cors import CORS
 from groq import Groq
@@ -11,7 +12,7 @@ from supabase import create_client
 app = Flask(__name__)
 CORS(app)
 
-# Load Environment Variables from Render (strip accidental spaces)
+# Load Environment Variables from Render
 GROQ_API_KEY = (os.environ.get("GROQ_API_KEY") or "").strip()
 GEMINI_API_KEY = (os.environ.get("GEMINI_API_KEY") or "").strip()
 SARVAM_API_KEY = (os.environ.get("SARVAM_API_KEY") or "").strip()
@@ -43,14 +44,20 @@ except Exception as e:
 def home():
     return jsonify({
         "status": "Rizzie Family AI Core is online and running 24/7!",
-        "features": ["Groq Router", "Gemini Reasoning", "Sarvam Tamil Voice", "Supabase Family Vault"]
+        "features": [
+            "Calls, SMS & WhatsApp",
+            "Email Composer",
+            "YouTube & Maps",
+            "Alarms & Reminders",
+            "Supabase Family Vault (Auto-Read & Write)"
+        ]
     }), 200
 
 @app.route("/rizzie", methods=["POST"])
 def rizzie_handler():
     data = request.get_json(silent=True) or {}
 
-    # Security Check: Ensure family password matches via JSON body or Header
+    # Security Check
     auth_password = data.get("password") or request.headers.get("X-Family-Password")
     if auth_password != FAMILY_SECRET_PASSWORD:
         return jsonify({"error": "Unauthorized family member access."}), 403
@@ -61,36 +68,73 @@ def rizzie_handler():
     if not user_query:
         return jsonify({"error": "No query provided."}), 400
 
-    # 1. Fetch Family Tree & Context from Supabase Vault
-    family_context = "Family vault connected."
+    # 1. Fetch Family Tree, Contacts & Birthdays from Supabase Vault
+    family_context = "No vault entries loaded."
     if supabase:
         try:
             res = supabase.table("family_vault").select("*").execute()
-            family_context = str(res.data)
+            family_context = json.dumps(res.data, ensure_ascii=False)
         except Exception as e:
-            family_context = f"Vault note: {str(e)}"
+            family_context = f"Vault read note: {str(e)}"
 
-    # System instruction for Rizzie's personality and rules
+    current_time_str = datetime.now().strftime("%A, %d %B %Y, %I:%M %p")
+
+    # 2. Universal Action & Memory Prompt
     system_prompt = f"""
-    You are Rizzie, a warm, loyal personal family companion and assistant for Rishikesh's family in Bengaluru.
-    You understand colloquial Tamil, Tanglish ('Pavithra ku call pannu'), and English fluently.
-    You know the family tree and context: {family_context}
+    You are Rizzie, a warm, smart personal family companion for Rishikesh's family in Bengaluru.
+    Current Date & Time: {current_time_str}.
+    Speaker: {user_speaker}.
+    Family Vault Database (Contacts, Relations, Birthdays, Notes): {family_context}
 
-    The person speaking to you right now is: {user_speaker}.
+    You understand colloquial Tamil, Tanglish ('Pavithra ku call pannu', 'Amma ku WhatsApp anupu', '6:30 ku alarm vai'), and English fluently.
 
-    Analyze their request. If it is a direct command requiring an action (like calling someone, opening YouTube, navigating Maps, sending WhatsApp, or Emergency SOS), output a strict JSON response.
-    If it is a general question, story, or conversational topic, handle it gracefully.
+    Analyze the user's request and return a STRICT JSON object with these exact 6 keys:
+    1. "action": Must be one of:
+       - "NONE" (general conversation, answering questions, checking birthdays/info from the vault)
+       - "MAKE_CALL" (phone call)
+       - "SEND_SMS" (normal text message)
+       - "SEND_WHATSAPP" (WhatsApp message)
+       - "SEND_EMAIL" (sending an email)
+       - "PLAY_YOUTUBE" (searching or playing a video/song on YouTube)
+       - "NAVIGATE_MAPS" (directions or finding a place on Google Maps)
+       - "SET_ALARM" (setting a clock alarm)
+       - "SET_REMINDER" (setting a reminder or calendar event)
+       - "SAVE_VAULT" (when the user asks you to remember a birthday, phone number, relation, or note)
+       - "EMERGENCY_SOS" (urgent help needed)
 
-    Return a strict JSON object containing:
-    1. "action": One of ["NONE", "MAKE_CALL", "PLAY_YOUTUBE", "NAVIGATE_MAPS", "SEND_WHATSAPP", "EMERGENCY_SOS"]
-    2. "target": Name, phone number, or search term if an action is required (otherwise empty string).
-    3. "spoken_reply": A natural, warm reply spoken back in colloquial Tamil/Tanglish or English addressing {user_speaker}.
+    2. "target":
+       - For MAKE_CALL / SEND_SMS / SEND_WHATSAPP: Look up the person's phone number in Family Vault Database. If found, output the exact 10-digit or +91 number. If not in the vault, output their clean Contact Name so the phone can look it up locally.
+       - For SEND_EMAIL: Recipient's email address from the vault (or name if unknown).
+       - For PLAY_YOUTUBE: The exact YouTube search query (e.g., "Lana Del Rey Summertime Sadness" or "Tamil melody songs").
+       - For NAVIGATE_MAPS: Destination name or address.
+       - For SET_ALARM: 24-hour hour integer as string (e.g., "6" for 6 AM, "18" for 6 PM).
+       - For SET_REMINDER: Reminder title/task description.
+       - For SAVE_VAULT: Category name (e.g., "birthday", "contact", "medical", "note").
+       - Otherwise: ""
+
+    3. "subject":
+       - For SEND_EMAIL: Email subject line.
+       - For SAVE_VAULT: Person's name or item title (e.g., "Pavithra", "Niece Birthday").
+       - Otherwise: ""
+
+    4. "body":
+       - For SEND_SMS / SEND_WHATSAPP / SEND_EMAIL: The message or email body text to send.
+       - For SAVE_VAULT: The exact details to store (e.g., "Birthday is Oct 15", "Phone: +919876543210").
+       - Otherwise: ""
+
+    5. "extra_param":
+       - For SET_ALARM: Minute integer as string (e.g., "30" for 6:30, "0" for on the hour).
+       - For SET_REMINDER: Time or date string (e.g., "Tomorrow 9:00 AM").
+       - Otherwise: ""
+
+    6. "spoken_reply": A warm, natural, brief spoken confirmation in colloquial Tanglish/Tamil or English addressing {user_speaker}.
     """
 
     groq_err = "Not configured"
     gemini_err = "Not configured"
+    ai_output = None
 
-    # 1. Try Groq with openai/gpt-oss-120b from your Playground
+    # Try Groq First
     if groq_client:
         try:
             completion = groq_client.chat.completions.create(
@@ -99,20 +143,19 @@ def rizzie_handler():
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": user_query}
                 ],
-                temperature=1,
+                temperature=0.7,
                 max_completion_tokens=2048,
                 top_p=1,
                 stream=False,
                 response_format={"type": "json_object"}
             )
             ai_output = json.loads(completion.choices[0].message.content)
-            return jsonify(ai_output), 200
         except Exception as e:
             groq_err = str(e)
             print(f"Groq API error: {groq_err}", flush=True)
 
-    # 2. Fallback to Gemini (tries 3.5-flash first, then auto-detects valid flash model)
-    if gemini_client:
+    # Fallback to Gemini if Groq failed
+    if not ai_output and gemini_client:
         try:
             valid_gemini_models = [
                 m.name.replace("models/", "") for m in gemini_client.models.list()
@@ -131,19 +174,32 @@ def rizzie_handler():
                 )
             )
             ai_output = json.loads(response.text)
-            return jsonify(ai_output), 200
         except Exception as e:
             gemini_err = str(e)
             print(f"Gemini API error: {gemini_err}", flush=True)
 
-    return jsonify({
-        "action": "NONE",
-        "spoken_reply": "Sorry, both of my AI brains encountered an error.",
-        "debug_groq_error": groq_err,
-        "debug_gemini_error": gemini_err
-    }), 500
+    if not ai_output:
+        return jsonify({
+            "action": "NONE",
+            "spoken_reply": "Sorry, both of my AI brains encountered an error.",
+            "debug_groq_error": groq_err,
+            "debug_gemini_error": gemini_err
+        }), 500
 
-# Dedicated Sarvam AI Text-to-Speech Endpoint for Rizzie's Tamil Voice
+    # 3. Auto-Save to Supabase if action is SAVE_VAULT
+    if ai_output.get("action") == "SAVE_VAULT" and supabase:
+        try:
+            supabase.table("family_vault").insert({
+                "category": ai_output.get("target", "general"),
+                "name": ai_output.get("subject", user_speaker),
+                "details": ai_output.get("body", user_query)
+            }).execute()
+        except Exception as db_err:
+            print(f"Supabase insert error: {db_err}", flush=True)
+
+    return jsonify(ai_output), 200
+
+# Dedicated Sarvam AI Text-to-Speech Endpoint
 @app.route("/speak", methods=["POST"])
 def sarvam_speak():
     data = request.get_json(silent=True) or {}
