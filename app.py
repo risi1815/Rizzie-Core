@@ -12,10 +12,6 @@ from flask_cors import CORS  # 1. Import CORS here
 app = Flask(__name__)
 CORS(app)  # 2. Enable CORS on your app right here
 
-# Your other imports and code follow below...
-groq_client = Groq(api_key=GROQ_API_KEY) if GROQ_API_KEY else None
-gemini_client = genai.Client(api_key=GEMINI_API_KEY) if GEMINI_API_KEY else None
-
 # Load Environment Variables from Render
 GROQ_API_KEY = os.environ.get("GROQ_API_KEY")
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
