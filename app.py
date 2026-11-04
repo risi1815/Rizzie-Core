@@ -21,19 +21,17 @@ SUPABASE_KEY = os.environ.get("SUPABASE_KEY")
 FAMILY_SECRET_PASSWORD = os.environ.get("FAMILY_SECRET_PASSWORD", "rizzie2026family")
 
 # Initialize AI & Database Clients safely
-# Initialize AI & Database Clients safely
 try:
-    # your AI call logic here
     groq_client = Groq(api_key=GROQ_API_KEY) if GROQ_API_KEY else None
 except Exception as e:
-    print(f"Error in /rizzie route: {e}")
-    return jsonify({"action": "NONE", "spoken_reply": f"Error: {str(e)}"}), 500
+    print(f"Groq init error: {e}")
+    groq_client = None
+
 try:
-    # your AI call logic here
     gemini_client = genai.Client(api_key=GEMINI_API_KEY) if GEMINI_API_KEY else None
 except Exception as e:
-    print(f"Error in /rizzie route: {e}")
-    return jsonify({"action": "NONE", "spoken_reply": f"Error: {str(e)}"}), 500
+    print(f"Gemini init error: {e}")
+    gemini_client = None
     
 supabase = None
 try:
