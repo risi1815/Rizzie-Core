@@ -90,11 +90,22 @@ def rizzie_handler():
     groq_err = "Not configured"
     gemini_err = "Not configured"
 
-    # Try Groq Llama 3.3 first
+  groq_err = "Not configured"
+    gemini_err = "Not configured"
+
+    # 1. Try Groq first (dynamically selects an active model on your account)
     if groq_client:
         try:
+            available_models = [
+                m.id for m in groq_client.models.list().data
+                if not any(skip in m.id.lower() for skip in ["whisper", "guard", "tts", "vision", "embed"])
+            ]
+            # Prefer a 70b or llama model if available, otherwise pick the first active chat model
+            preferred = [m for m in available_models if "llama" in m.lower() or "70b" in m.lower()]
+            active_groq_model = preferred[0] if preferred else available_models[0]
+
             completion = groq_client.chat.completions.create(
-                model="llama-3.3-70b-versatile",
+                model=active_groq_model,
                 messages=[
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": user_query}
@@ -107,11 +118,11 @@ def rizzie_handler():
             groq_err = str(e)
             print(f"Groq API error: {groq_err}", flush=True)
 
-    # Fallback to Gemini 2.5 Flash if Groq fails
+    # 2. Fallback to Gemini 3.0 Flash
     if gemini_client:
         try:
             response = gemini_client.models.generate_content(
-                model="gemini-2.5-flash",
+                model="gemini-3.0-flash",
                 contents=user_query,
                 config=types.GenerateContentConfig(
                     system_instruction=system_prompt,
