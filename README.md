@@ -1,0 +1,2 @@
+# Rizzie-Core
+Family AI
