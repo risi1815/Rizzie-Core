@@ -90,9 +90,6 @@ def rizzie_handler():
     groq_err = "Not configured"
     gemini_err = "Not configured"
 
-  groq_err = "Not configured"
-    gemini_err = "Not configured"
-
     # 1. Try Groq first (dynamically selects an active model on your account)
     if groq_client:
         try:
