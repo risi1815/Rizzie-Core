@@ -6,8 +6,15 @@ from groq import Groq
 from google import genai
 from google.genai import types
 from supabase import create_client
+from flask import Flask, request, jsonify
+from flask_cors import CORS  # 1. Import CORS here
 
 app = Flask(__name__)
+CORS(app)  # 2. Enable CORS on your app right here
+
+# Your other imports and code follow below...
+groq_client = Groq(api_key=GROQ_API_KEY) if GROQ_API_KEY else None
+gemini_client = genai.Client(api_key=GEMINI_API_KEY) if GEMINI_API_KEY else None
 
 # Load Environment Variables from Render
 GROQ_API_KEY = os.environ.get("GROQ_API_KEY")
