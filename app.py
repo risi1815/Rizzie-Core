@@ -18,9 +18,16 @@ SUPABASE_KEY = os.environ.get("SUPABASE_KEY")
 FAMILY_SECRET_PASSWORD = os.environ.get("FAMILY_SECRET_PASSWORD", "rizzie2026family")
 
 # Initialize AI & Database Clients safely
+# Initialize AI & Database Clients safely
 groq_client = Groq(api_key=GROQ_API_KEY) if GROQ_API_KEY else None
 gemini_client = genai.Client(api_key=GEMINI_API_KEY) if GEMINI_API_KEY else None
-supabase = create_client(SUPABASE_URL, SUPABASE_KEY) if SUPABASE_URL and SUPABASE_KEY else None
+
+supabase = None
+try:
+    if SUPABASE_URL and SUPABASE_KEY and len(SUPABASE_KEY) > 10:
+        supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
+except Exception as e:
+    print(f"Database vault warning (continuing without vault): {e}")
 
 @app.route("/", methods=["GET"])
 def home():
