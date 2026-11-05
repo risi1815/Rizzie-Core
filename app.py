@@ -131,51 +131,114 @@ def rizzie_handler():
     """
 
     groq_err = "Not configured"
+
     gemini_err = "Not configured"
+
     ai_output = None
 
+
+
     # Try Groq First
+
     if groq_client:
+
         try:
+
             completion = groq_client.chat.completions.create(
-                model="llama-3.3-70b-versatile",
+
+                model="openai/gpt-oss-120b",
+
                 messages=[
+
                     {"role": "system", "content": system_prompt},
+
                     {"role": "user", "content": user_query}
+
                 ],
-                temperature=0.4,
-                max_completion_tokens=1024,
+
+                temperature=0.7,
+
+                max_completion_tokens=2048,
+
+                top_p=1,
+
+                stream=False,
+
                 response_format={"type": "json_object"}
+
             )
+
             ai_output = json.loads(completion.choices[0].message.content)
+
         except Exception as e:
+
             groq_err = str(e)
+
             print(f"Groq API error: {groq_err}", flush=True)
 
+
+
     # Fallback to Gemini if Groq failed
+
     if not ai_output and gemini_client:
+
         try:
+
+            valid_gemini_models = [
+
+                m.name.replace("models/", "") for m in gemini_client.models.list()
+
+                if "flash" in m.name.lower() and not any(x in m.name.lower() for x in ["tts", "image", "audio", "embedding", "2.5"])
+
+            ]
+
+            target_gemini = "gemini-3.5-flash"
+
+            if valid_gemini_models and target_gemini not in valid_gemini_models:
+
+                target_gemini = valid_gemini_models[0]
+
+
+
             response = gemini_client.models.generate_content(
-                model="gemini-2.5-flash",
+
+                model=target_gemini,
+
                 contents=user_query,
+
                 config=types.GenerateContentConfig(
+
                     system_instruction=system_prompt,
+
                     response_mime_type="application/json"
+
                 )
+
             )
+
             ai_output = json.loads(response.text)
+
         except Exception as e:
+
             gemini_err = str(e)
+
             print(f"Gemini API error: {gemini_err}", flush=True)
 
-    if not ai_output:
-        return jsonify({
-            "action": "NONE",
-            "spoken_reply": "Sorry, both of my AI brains encountered an error.",
-            "debug_groq_error": groq_err,
-            "debug_gemini_error": gemini_err
-        }), 500
 
+
+    if not ai_output:
+
+        return jsonify({
+
+            "action": "NONE",
+
+            "spoken_reply": "Sorry, both of my AI brains encountered an error.",
+
+            "debug_groq_error": groq_err,
+
+            "debug_gemini_error": gemini_err
+
+        }), 500
     return jsonify(ai_output), 200
 
 
