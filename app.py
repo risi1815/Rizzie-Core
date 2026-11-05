@@ -1,8 +1,10 @@
 import os
 import json
+import base64
+import io
 import requests
 from datetime import datetime
-from flask import Flask, request, jsonify
+from flask import Flask, request, jsonify, send_file
 from flask_cors import CORS
 from groq import Groq
 from google import genai
@@ -45,11 +47,10 @@ def home():
     return jsonify({
         "status": "Rizzie Family AI Core is online and running 24/7!",
         "features": [
+            "All-Rounder General Knowledge & Math",
+            "App Launching & Media Controls",
             "Calls, SMS & WhatsApp",
-            "Email Composer",
-            "YouTube & Maps",
-            "Alarms & Reminders",
-            "Supabase Family Vault (Auto-Read & Write)"
+            "Sarvam TTS Engine Audio Export"
         ]
     }), 200
 
@@ -86,11 +87,13 @@ def rizzie_handler():
     Speaker: {user_speaker}.
     Family Vault Database (Contacts, Relations, Birthdays, Notes): {family_context}
 
-    You understand colloquial Tamil, Tanglish ('Pavithra ku call pannu', 'Amma ku WhatsApp anupu', '6:30 ku alarm vai'), and English fluently.
+    You understand colloquial Tamil, Tanglish, and English fluently.
+    CRITICAL: If the user asks a math question (e.g., 'What is 24 times 65?'), a science question, or general knowledge, calculate and provide the correct answer immediately within the 'spoken_reply' using action 'NONE'.
 
     Analyze the user's request and return a STRICT JSON object with these exact 6 keys:
     1. "action": Must be one of:
-       - "NONE" (general conversation, answering questions, checking birthdays/info from the vault)
+       - "NONE" (general conversation, answering math/facts, checking vault info)
+       - "OPEN_APP" (opening a general app on the phone)
        - "MAKE_CALL" (phone call)
        - "SEND_SMS" (normal text message)
        - "SEND_WHATSAPP" (WhatsApp message)
@@ -99,35 +102,32 @@ def rizzie_handler():
        - "NAVIGATE_MAPS" (directions or finding a place on Google Maps)
        - "SET_ALARM" (setting a clock alarm)
        - "SET_REMINDER" (setting a reminder or calendar event)
-       - "SAVE_VAULT" (when the user asks you to remember a birthday, phone number, relation, or note)
+       - "SAVE_VAULT" (saving new info to the database)
        - "EMERGENCY_SOS" (urgent help needed)
 
     2. "target":
-       - For MAKE_CALL / SEND_SMS / SEND_WHATSAPP: Look up the person's phone number in Family Vault Database. If found, output the exact 10-digit or +91 number. If not in the vault, output their clean Contact Name so the phone can look it up locally.
-       - For SEND_EMAIL: Recipient's email address from the vault (or name if unknown).
-       - For PLAY_YOUTUBE: The exact YouTube search query (e.g., "Lana Del Rey Summertime Sadness" or "Tamil melody songs").
+       - For OPEN_APP: The exact name of the app (e.g., "Instagram", "Calculator", "Spotify").
+       - For MAKE_CALL / SEND_SMS / SEND_WHATSAPP: 10-digit number or Contact Name.
+       - For PLAY_YOUTUBE: The exact YouTube search query (e.g., "Anirudh songs").
        - For NAVIGATE_MAPS: Destination name or address.
-       - For SET_ALARM: 24-hour hour integer as string (e.g., "6" for 6 AM, "18" for 6 PM).
-       - For SET_REMINDER: Reminder title/task description.
-       - For SAVE_VAULT: Category name (e.g., "birthday", "contact", "medical", "note").
+       - For SET_ALARM: 24-hour hour integer as string.
        - Otherwise: ""
 
     3. "subject":
        - For SEND_EMAIL: Email subject line.
-       - For SAVE_VAULT: Person's name or item title (e.g., "Pavithra", "Niece Birthday").
        - Otherwise: ""
 
     4. "body":
-       - For SEND_SMS / SEND_WHATSAPP / SEND_EMAIL: The message or email body text to send.
-       - For SAVE_VAULT: The exact details to store (e.g., "Birthday is Oct 15", "Phone: +919876543210").
+       - For SEND_SMS / SEND_WHATSAPP / SEND_EMAIL: The message body text.
+       - For SAVE_VAULT: The exact details to store.
        - Otherwise: ""
 
     5. "extra_param":
-       - For SET_ALARM: Minute integer as string (e.g., "30" for 6:30, "0" for on the hour).
-       - For SET_REMINDER: Time or date string (e.g., "Tomorrow 9:00 AM").
+       - For SET_ALARM: Minute integer as string (e.g., "30").
+       - For SET_REMINDER: Time or date string.
        - Otherwise: ""
 
-    6. "spoken_reply": A warm, natural, brief spoken confirmation in colloquial Tanglish/Tamil or English addressing {user_speaker}.
+    6. "spoken_reply": A warm, natural, brief spoken confirmation or the direct answer to a general knowledge/math question. Speak in Tanglish/Tamil or English.
     """
 
     groq_err = "Not configured"
@@ -138,15 +138,13 @@ def rizzie_handler():
     if groq_client:
         try:
             completion = groq_client.chat.completions.create(
-                model="openai/gpt-oss-120b",
+                model="llama-3.3-70b-versatile",
                 messages=[
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": user_query}
                 ],
-                temperature=0.7,
-                max_completion_tokens=2048,
-                top_p=1,
-                stream=False,
+                temperature=0.4,
+                max_completion_tokens=1024,
                 response_format={"type": "json_object"}
             )
             ai_output = json.loads(completion.choices[0].message.content)
@@ -157,16 +155,8 @@ def rizzie_handler():
     # Fallback to Gemini if Groq failed
     if not ai_output and gemini_client:
         try:
-            valid_gemini_models = [
-                m.name.replace("models/", "") for m in gemini_client.models.list()
-                if "flash" in m.name.lower() and not any(x in m.name.lower() for x in ["tts", "image", "audio", "embedding", "2.5"])
-            ]
-            target_gemini = "gemini-3.5-flash"
-            if valid_gemini_models and target_gemini not in valid_gemini_models:
-                target_gemini = valid_gemini_models[0]
-
             response = gemini_client.models.generate_content(
-                model=target_gemini,
+                model="gemini-2.5-flash",
                 contents=user_query,
                 config=types.GenerateContentConfig(
                     system_instruction=system_prompt,
@@ -186,24 +176,17 @@ def rizzie_handler():
             "debug_gemini_error": gemini_err
         }), 500
 
-    # 3. Auto-Save to Supabase if action is SAVE_VAULT
-    if ai_output.get("action") == "SAVE_VAULT" and supabase:
-        try:
-            supabase.table("family_vault").insert({
-                "category": ai_output.get("target", "general"),
-                "name": ai_output.get("subject", user_speaker),
-                "details": ai_output.get("body", user_query)
-            }).execute()
-        except Exception as db_err:
-            print(f"Supabase insert error: {db_err}", flush=True)
-
     return jsonify(ai_output), 200
 
-# Dedicated Sarvam AI Text-to-Speech Endpoint
+
+# Sarvam AI TTS Endpoint - Now decodes JSON and returns actual Audio
 @app.route("/speak", methods=["POST"])
 def sarvam_speak():
     data = request.get_json(silent=True) or {}
     text_to_speak = data.get("text", "")
+
+    if not text_to_speak:
+        return jsonify({"error": "No text provided"}), 400
 
     if not SARVAM_API_KEY:
         return jsonify({"error": "Sarvam API Key not configured."}), 500
@@ -213,7 +196,7 @@ def sarvam_speak():
         "inputs": [text_to_speak],
         "target_language_code": "ta-IN",
         "speaker": "meera",
-        "speech_sample_rate": 8000,
+        "speech_sample_rate": 16000,
         "enable_preprocessing": True,
         "model": "bulbul:v1"
     }
@@ -224,7 +207,25 @@ def sarvam_speak():
 
     try:
         response = requests.post(url, json=payload, headers=headers)
-        return jsonify(response.json()), response.status_code
+        response_data = response.json()
+
+        # Extract the Base64 audio string from Sarvam's JSON
+        if "audios" in response_data and len(response_data["audios"]) > 0:
+            audio_base64 = response_data["audios"][0]
+            
+            # Decode Base64 string into raw audio bytes
+            audio_bytes = base64.b64decode(audio_base64)
+            
+            # Send the bytes back as a playable .wav file
+            return send_file(
+                io.BytesIO(audio_bytes),
+                mimetype="audio/wav",
+                as_attachment=False,
+                download_name="rizzie_voice.wav"
+            )
+        else:
+            return jsonify({"error": "No audio returned from Sarvam", "details": response_data}), 500
+
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
