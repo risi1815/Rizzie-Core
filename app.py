@@ -256,13 +256,13 @@ def sarvam_speak():
 
     url = "https://api.sarvam.ai/text-to-speech"
     payload = {
-        "inputs": [text_to_speak],
-        "target_language_code": "ta-IN",
-        "speaker": "meera",
-        "speech_sample_rate": 16000,
-        "enable_preprocessing": True,
-        "model": "bulbul:v1"
-    }
+    "inputs": [text_to_speak],
+    "target_language_code": "ta-IN",
+    "speaker": "vijay_ta_narration",  # Valid Tamil male voice from the error list
+    "speech_sample_rate": 16000,
+    "enable_preprocessing": True,
+    "model": "bulbul:v4-flash"        # Required new model version
+}
     headers = {
         "api-subscription-key": SARVAM_API_KEY,
         "Content-Type": "application/json"
